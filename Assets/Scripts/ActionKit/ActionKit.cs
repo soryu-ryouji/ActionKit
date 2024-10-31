@@ -4,40 +4,9 @@ using UnityEngine;
 
 public class ActionKit
 {
-    private ActionPlayer m_ActionPlayer = new();
-
-    private Calendar m_Calendar = new();
-
-    private Timer m_Timer = new();
-
-    public void AddAction(float beginSeconds, BaseAction action)
+    public void Play(ActionContainer container)
     {
-        m_Calendar.Record(new CalendarItem()
-        {
-            StartSeconds = beginSeconds,
-            Action = action
-        });
-    }
-
-    public void Play()
-    {
-        m_Timer.Start();
-        m_Timer.CalculateTimeData();
-
-        var trigger = new GameObject(nameof(ActionKitUpdateTrigger)).AddComponent<ActionKitUpdateTrigger>();
-
-        trigger.OnUpdate += () =>
-        {
-            m_Timer.CalculateTimeData();
-
-            var calendarItems = m_Calendar.GetAvailableCalendarItems(m_Timer.CurrentSeconds);
-
-            foreach (var calendarItem in calendarItems)
-            {
-                m_ActionPlayer.Play(calendarItem.Action);
-                m_Calendar.FinishCalendarItem(calendarItem);
-            }
-        };
+        container.Play();
     }
 }
 
@@ -53,6 +22,12 @@ public class ActionKitUpdateTrigger : MonoBehaviour
 
 public class ActionPlayer
 {
+    public void RegisterUpdate(System.Action onUpdate)
+    {
+        var trigger = new GameObject(nameof(ActionKitUpdateTrigger)).AddComponent<ActionKitUpdateTrigger>();
+        trigger.OnUpdate += onUpdate;
+    }
+
     public void Play(BaseAction action)
     {
         action.Execute();
@@ -68,12 +43,12 @@ public class BaseAction
 
 public class CallbackAction : BaseAction
 {
+    private System.Action m_Callback;
+
     public CallbackAction(System.Action callback)
     {
         m_Callback = callback;
     }
-
-    private System.Action m_Callback;
 
     public override void Execute()
     {
@@ -81,27 +56,112 @@ public class CallbackAction : BaseAction
     }
 }
 
-public class Calendar
+public abstract class ActionContainer
 {
-    private List<CalendarItem> m_CalendarItems = new List<CalendarItem>();
+    public abstract void Play();
 
-    public void Record(CalendarItem item)
+    public abstract void Update();
+}
+
+public class Sequence : ActionContainer
+{
+    private List<BaseAction> m_Actions = new();
+    private ActionPlayer m_Player;
+
+    public override void Play()
     {
-        m_CalendarItems.Add(item);
+        m_Player = new ActionPlayer();
+        m_Player.RegisterUpdate(Update);
     }
 
-    public void FinishCalendarItem(CalendarItem item)
+    public override void Update()
     {
-        m_CalendarItems.Remove(item);
+        if (m_Actions.Any())
+        {
+            var action = m_Actions.First();
+            m_Player.Play(action);
+            m_Actions.RemoveAt(0);
+        }
     }
 
-    public List<CalendarItem> GetAvailableCalendarItems(float currentSeconds)
+    public void AddAction(BaseAction action)
     {
-        return m_CalendarItems.Where(item => item.StartSeconds < currentSeconds).ToList();
+        m_Actions.Add(action);
     }
 }
 
-public class CalendarItem
+public class Spawn : ActionContainer
+{
+    private List<BaseAction> m_Actions = new();
+
+
+    private ActionPlayer m_Player = null;
+
+    public override void Play()
+    {
+        m_Player = new ActionPlayer();
+
+        m_Player.RegisterUpdate(Update);
+    }
+
+    public override void Update()
+    {
+        foreach (var lxAction in m_Actions)
+        {
+            m_Player.Play(lxAction);
+        }
+
+        m_Actions.Clear();
+    }
+
+    public void AddAction(BaseAction action)
+    {
+        m_Actions.Add(action);
+    }
+}
+
+public class Timeline : ActionContainer
+{
+    private List<Timepoint> m_Timepoints = new List<Timepoint>();
+
+    private ActionPlayer m_Player = null;
+
+    private float m_StartSeconds = 0;
+
+    public override void Play()
+    {
+        m_Player = new ActionPlayer();
+        m_Player.RegisterUpdate(Update);
+        m_StartSeconds = Time.time;
+    }
+
+    public override void Update()
+    {
+        var currentSeconds = Time.time - m_StartSeconds;
+
+        var availabelTimepoints = m_Timepoints.Where(item => item.StartSeconds < currentSeconds).ToArray();
+
+        foreach (var timepoint in availabelTimepoints)
+        {
+            m_Player.Play(timepoint.Action);
+        }
+
+        foreach (var availabelTimepoint in availabelTimepoints)
+        {
+            m_Timepoints.Remove(availabelTimepoint);
+        }
+    }
+
+    public void AddAction(float startSeconds, BaseAction action)
+    {
+        m_Timepoints.Add(new Timepoint()
+        {
+            StartSeconds = startSeconds,
+            Action = action
+        });
+    }
+}
+public class Timepoint
 {
     public float StartSeconds;
 
@@ -112,15 +172,15 @@ public class Timer
 {
     public float CurrentSeconds;
 
-    private float mStartSeconds;
+    private float m_StartSeconds;
 
     public void Start()
     {
-        mStartSeconds = Time.time;
+        m_StartSeconds = Time.time;
     }
 
     public void CalculateTimeData()
     {
-        CurrentSeconds = Time.time - mStartSeconds;
+        CurrentSeconds = Time.time - m_StartSeconds;
     }
 }
