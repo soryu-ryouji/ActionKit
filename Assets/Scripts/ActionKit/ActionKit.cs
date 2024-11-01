@@ -4,9 +4,9 @@ using UnityEngine;
 
 public class ActionKit
 {
-    public void Play(ActionContainer container)
+    public void Play(BaseAction action)
     {
-        container.Play();
+        action.Execute();
     }
 }
 
@@ -36,6 +36,8 @@ public class ActionPlayer
 
 public class BaseAction
 {
+    public bool Finished;
+
     public virtual void Execute()
     {
     }
@@ -53,13 +55,12 @@ public class CallbackAction : BaseAction
     public override void Execute()
     {
         m_Callback();
+        Finished = true;
     }
 }
 
-public abstract class ActionContainer
+public abstract class ActionContainer : BaseAction
 {
-    public abstract void Play();
-
     public abstract void Update();
 }
 
@@ -67,8 +68,9 @@ public class Sequence : ActionContainer
 {
     private List<BaseAction> m_Actions = new();
     private ActionPlayer m_Player;
+    private BaseAction m_CurrentAction = null;
 
-    public override void Play()
+    public override void Execute()
     {
         m_Player = new ActionPlayer();
         m_Player.RegisterUpdate(Update);
@@ -76,11 +78,27 @@ public class Sequence : ActionContainer
 
     public override void Update()
     {
+        // 有 action
         if (m_Actions.Any())
         {
-            var action = m_Actions.First();
-            m_Player.Play(action);
-            m_Actions.RemoveAt(0);
+            // 上一帧 mCurrentAction 完成了 或者 是第一次运行
+            // 则播放最顶部动作，并缓存到 mCurrentAction 变量中
+            if (m_CurrentAction == null || m_CurrentAction.Finished)
+            {
+                m_CurrentAction = m_Actions.First();
+                m_Player.Play(m_CurrentAction);
+            }
+
+            // 如果在上一帧完成了，则去掉顶部动作
+            if (m_CurrentAction.Finished)
+            {
+                m_Actions.RemoveAt(0);
+            }
+        }
+        // 没有 action 则标记完成
+        else
+        {
+            Finished = true;
         }
     }
 
@@ -93,14 +111,12 @@ public class Sequence : ActionContainer
 public class Spawn : ActionContainer
 {
     private List<BaseAction> m_Actions = new();
-
-
     private ActionPlayer m_Player = null;
+    private List<BaseAction> m_ExecutingActions = new();
 
-    public override void Play()
+    public override void Execute()
     {
         m_Player = new ActionPlayer();
-
         m_Player.RegisterUpdate(Update);
     }
 
@@ -109,9 +125,12 @@ public class Spawn : ActionContainer
         foreach (var lxAction in m_Actions)
         {
             m_Player.Play(lxAction);
+            m_ExecutingActions.Add(lxAction);
         }
 
         m_Actions.Clear();
+
+        Finished = m_ExecutingActions.All(action => action.Finished);
     }
 
     public void AddAction(BaseAction action)
@@ -123,12 +142,10 @@ public class Spawn : ActionContainer
 public class Timeline : ActionContainer
 {
     private List<Timepoint> m_Timepoints = new List<Timepoint>();
-
     private ActionPlayer m_Player = null;
-
     private float m_StartSeconds = 0;
 
-    public override void Play()
+    public override void Execute()
     {
         m_Player = new ActionPlayer();
         m_Player.RegisterUpdate(Update);
@@ -138,7 +155,6 @@ public class Timeline : ActionContainer
     public override void Update()
     {
         var currentSeconds = Time.time - m_StartSeconds;
-
         var availabelTimepoints = m_Timepoints.Where(item => item.StartSeconds < currentSeconds).ToArray();
 
         foreach (var timepoint in availabelTimepoints)
@@ -150,6 +166,8 @@ public class Timeline : ActionContainer
         {
             m_Timepoints.Remove(availabelTimepoint);
         }
+
+        Finished = availabelTimepoints.Length == 0;
     }
 
     public void AddAction(float startSeconds, BaseAction action)
